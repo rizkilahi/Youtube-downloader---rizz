@@ -6,10 +6,10 @@ YouTube Downloader (yt-dlp)
 • Saves downloads into dedicated sub‑folders:
     videos/   for full‑video MP4 files
     audio/    for extracted audio (mp3 / m4a / opus)
-• Appends quality tag to the filename (e.g.  "My Song_720p.mp4", "My Song_mp3.mp3")
+• Appends quality tag to the filename (e.g.  "My Song_720p.mp4", "My Song_mp3.mp3")
 • Handles duplicate names by adding (1), (2), … before the extension.
 
-Tested on Windows 10/11, macOS, and Debian/Ubuntu.
+Tested on Windows 10/11, macOS, and Debian/Ubuntu.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ def ensure_ffmpeg() -> str:
         textwrap.dedent(
             """
             ❌ Automatic ffmpeg installation failed.
-               Install it manually, then re‎reun this script.
+               Install it manually, then rereun this script.
                • Windows: choco install ffmpeg  (or download static build)
                • macOS : brew install ffmpeg
                • Linux : sudo apt-get install ffmpeg
@@ -104,7 +104,7 @@ def ask(prompt: str, choices: list[str]) -> str:
         print(prompt)
         for idx, c in enumerate(choices, 1):
             print(f" {idx}. {c}")
-        sel = input(f" Choose [1‎-{len(choices)}]: ").strip()
+        sel = input(f" Choose [1-{len(choices)}]: ").strip()
         if sel.isdigit() and 1 <= int(sel) <= len(choices):
             return choices[int(sel) - 1]
         print(Fore.YELLOW + "  ⚠️  Invalid choice.\n")
@@ -125,7 +125,7 @@ def unique_template(directory: Path, base: str, ext: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    print(Fore.CYAN + "\n===   YouTube Downloader (yt‎-dlp)   ===\n")
+    print(Fore.CYAN + "\n===   YouTube Downloader (yt-dlp)   ===\n")
 
     url = input("Paste YouTube URL: ").strip()
     if not url:
