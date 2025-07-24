@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""
-YouTube Downloader (yt-dlp)
---------------------------
-• Installs missing dependencies (pip, yt‑dlp, ffmpeg) automatically
-• Saves downloads into dedicated sub‑folders:
-    videos/   for full‑video MP4 files
-    audio/    for extracted audio (mp3 / m4a / opus)
-• Appends quality tag to the filename (e.g.  "My Song_720p.mp4", "My Song_mp3.mp3")
-• Handles duplicate names by adding (1), (2), … before the extension.
-
-Tested on Windows 10/11, macOS, and Debian/Ubuntu.
-"""
-
 from __future__ import annotations
 import importlib
 import os
@@ -22,11 +9,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-BIN_DIR = Path(__file__).resolve().parent / "bin"  # Windows ffmpeg location
-
-# ---------------------------------------------------------------------------
-# 1. Dependency helpers
-# ---------------------------------------------------------------------------
+BIN_DIR = Path(__file__).resolve().parent / "bin"
 
 def ensure_pip_package(pkg_name: str) -> None:
     try:
@@ -41,20 +24,16 @@ def ensure_ffmpeg() -> str:
     path = shutil.which("ffmpeg")
     if path:
         return path
-
     system = platform.system()
     print("\n💡 ffmpeg not found – attempting automatic install …")
-
     try:
         if system == "Linux" and shutil.which("apt-get"):
             subprocess.check_call(["sudo", "apt-get", "update", "-y"])
             subprocess.check_call(["sudo", "apt-get", "install", "-y", "ffmpeg"])
             return shutil.which("ffmpeg") or "ffmpeg"
-
         if system == "Darwin" and shutil.which("brew"):
             subprocess.check_call(["brew", "install", "ffmpeg"])
             return shutil.which("ffmpeg") or "ffmpeg"
-
         if system == "Windows":
             BIN_DIR.mkdir(exist_ok=True)
             exe = BIN_DIR / "ffmpeg.exe"
@@ -72,18 +51,7 @@ def ensure_ffmpeg() -> str:
             return str(exe)
     except subprocess.CalledProcessError:
         pass
-
-    sys.exit(
-        textwrap.dedent(
-            """
-            ❌ Automatic ffmpeg installation failed.
-               Install it manually, then rereun this script.
-               • Windows: choco install ffmpeg  (or download static build)
-               • macOS : brew install ffmpeg
-               • Linux : sudo apt-get install ffmpeg
-            """
-        )
-    )
+    sys.exit(textwrap.dedent("""❌ Automatic ffmpeg installation failed."""))
 
 ensure_pip_package("yt-dlp")
 ensure_pip_package("colorama")
@@ -94,10 +62,6 @@ from yt_dlp.utils import sanitize_filename
 from colorama import Fore, Style, init as colorama_init
 
 colorama_init(autoreset=True)
-
-# ---------------------------------------------------------------------------
-# 2. Small helpers
-# ---------------------------------------------------------------------------
 
 def ask(prompt: str, choices: list[str]) -> str:
     while True:
@@ -120,10 +84,6 @@ def unique_template(directory: Path, base: str, ext: str) -> str:
         suffix = f" ({n})"
     return str(directory / f"{base}{suffix}.%(ext)s")
 
-# ---------------------------------------------------------------------------
-# 3. Main workflow
-# ---------------------------------------------------------------------------
-
 def main() -> None:
     print(Fore.CYAN + "\n===   YouTube Downloader (yt-dlp)   ===\n")
 
@@ -131,12 +91,34 @@ def main() -> None:
     if not url:
         sys.exit("❌ URL is required.")
 
+    is_playlist = "list=" in url
+    download_all = True
+    selected_indices = []
+
+    if is_playlist:
+        with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl_info:
+            playlist_info = ydl_info.extract_info(url, download=False)
+        entries = playlist_info.get("entries", [])
+        print(Fore.CYAN + f"\n📃 Detected playlist: {playlist_info.get('title', 'Untitled')} ({len(entries)} videos)\n")
+        choice = ask("Download semua atau pilih sebagian?", ["Semua video", "Pilih sebagian"])
+        if choice.startswith("Pilih"):
+            download_all = False
+            print("\nDaftar video dalam playlist:")
+            for i, entry in enumerate(entries, 1):
+                print(f" {i}. {entry.get('title', 'Unknown Title')}")
+            raw = input("\nMasukkan nomor video yang ingin didownload (pisahkan dengan koma, contoh: 1,3,5): ")
+            try:
+                selected_indices = [int(x.strip()) - 1 for x in raw.split(",") if x.strip().isdigit()]
+                selected_indices = [i for i in selected_indices if 0 <= i < len(entries)]
+            except Exception:
+                sys.exit("❌ Input tidak valid. Program dihentikan.")
+
     mode = ask("\nDownload what?", ["Video (mp4)", "Audio only"])
     is_audio = mode.startswith("Audio")
 
     if is_audio:
         audio_fmt = ask("\nChoose audio format:", ["mp3", "m4a", "opus"])
-        quality_tag = audio_fmt
+        quality_tag_base = audio_fmt
         start, end = None, None
         partial = ask("\nDownload full audio or just a section?", ["Full audio", "Specific time range"])
         if partial.startswith("Specific"):
@@ -146,10 +128,10 @@ def main() -> None:
                 start = "00:" + start
             if len(end.split(":")) == 2:
                 end = "00:" + end
-            quality_tag += f"_{start.replace(':', '').zfill(6)}-{end.replace(':', '').zfill(6)}"
+            quality_tag_base += f"_{start.replace(':', '').zfill(6)}-{end.replace(':', '').zfill(6)}"
     else:
         res = ask("\nChoose video resolution:", ["1080p", "720p", "480p", "360p", "auto"])
-        quality_tag = res
+        quality_tag_base = res
         start, end = None, None
         partial = ask("\nDownload full video or just a section?", ["Full video", "Specific time range"])
         if partial.startswith("Specific"):
@@ -159,76 +141,94 @@ def main() -> None:
                 start = "00:" + start
             if len(end.split(":")) == 2:
                 end = "00:" + end
-            quality_tag += f"_{start.replace(':', '').zfill(6)}-{end.replace(':', '').zfill(6)}"
+            quality_tag_base += f"_{start.replace(':', '').zfill(6)}-{end.replace(':', '').zfill(6)}"
 
-    out_dir = Path.cwd() / ("audio" if is_audio else "videos")
-    out_dir.mkdir(exist_ok=True)
+    # (⬇️⬇️⬇️ INI BAGIAN YANG DIMODIFIKASI UNTUK FOLDER KHUSUS PLAYLIST)
+    base_output = Path.cwd() / ("audio" if is_audio else "videos")
 
-    with yt_dlp.YoutubeDL({"quiet": True}) as ydl_info:
-        info = ydl_info.extract_info(url, download=False)
-    title = sanitize_filename(info.get("title", "video"), restricted=True)
+    if is_playlist:
+        playlist_title = sanitize_filename(playlist_info.get("title", "playlist"), restricted=True)
+        out_dir = base_output / playlist_title
+    else:
+        out_dir = base_output
 
-    base_name = f"{title}_{quality_tag}"
-    default_ext = "mp4" if not is_audio else audio_fmt
-    outtmpl = unique_template(out_dir, base_name, default_ext)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(Fore.BLUE + f"\n📁 Output folder: {out_dir}\n")
 
-    ydl_opts: dict = {
-        "ffmpeg_location": auto_ffmpeg,
-        "outtmpl": outtmpl,
-        "paths": {"home": str(out_dir)}
-    }
+    # (⬇️ Ambil metadata semua video)
+    if not is_playlist:
+        with yt_dlp.YoutubeDL({"quiet": True}) as ydl_info:
+            info = ydl_info.extract_info(url, download=False)
+        entries = [info]
+    else:
+        with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": False}) as ydl_info:
+            full_info = ydl_info.extract_info(url, download=False)
+        all_entries = full_info.get("entries", [])
+        entries = [e for i, e in enumerate(all_entries) if download_all or i in selected_indices]
 
     try_fragment_cut = bool(start and end)
+    default_ext = "mp4" if not is_audio else audio_fmt
 
-    if is_audio:
-        ydl_opts.update({
-            "format": "bestaudio/best",
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": audio_fmt,
-                    "preferredquality": "192",
-                }
-            ]
-        })
-    else:
-        qmap = {
-            "1080p": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]",
-            "720p": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]",
-            "480p": "bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]",
-            "360p": "bestvideo[ext=mp4][height<=360]+bestaudio[ext=m4a]/best[ext=mp4][height<=360]",
-            "auto": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
-        }
-        ydl_opts.update({
-            "format": qmap[res],
-            "postprocessors": [
-                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
-            ]
-        })
-
-    if try_fragment_cut:
-        # Try yt-dlp native section download first
-        ydl_opts["download_sections"] = [f"*{start}-{end}"]
-        ydl_opts["force_keyframes_at_cuts"] = True
+    ydl_opts_base = {
+        "ffmpeg_location": auto_ffmpeg,
+        "quiet": True,
+    }
 
     print("\n🔽️  Starting download …\n")
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-    except Exception as e:
-        print(Fore.YELLOW + "\n⚠️ Section download failed or not supported. Falling back to full download with postprocessing.")
-        # fallback to postprocessor-based cut
+
+    for entry in entries:
+        if not entry:
+            continue
+        video_url = entry.get("webpage_url")
+        title = sanitize_filename(entry.get("title", "video"), restricted=True)
+        base_name = f"{title}_{quality_tag_base}"
+        outtmpl = str(out_dir / f"{base_name}.%(ext)s")
+
+        ydl_opts = ydl_opts_base.copy()
+        ydl_opts["outtmpl"] = outtmpl
+
+        if is_audio:
+            ydl_opts.update({
+                "format": "bestaudio/best",
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": audio_fmt,
+                        "preferredquality": "192",
+                    }
+                ]
+            })
+        else:
+            qmap = {
+                "1080p": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]",
+                "720p": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]",
+                "480p": "bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]",
+                "360p": "bestvideo[ext=mp4][height<=360]+bestaudio[ext=m4a]/best[ext=mp4][height<=360]",
+                "auto": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]",
+            }
+            ydl_opts.update({
+                "format": qmap.get(res, "best"),
+                "postprocessors": [
+                    {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
+                ]
+            })
+
         if try_fragment_cut:
+            ydl_opts["download_sections"] = [f"*{start}-{end}"]
+            ydl_opts["force_keyframes_at_cuts"] = True
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl_each:
+                ydl_each.download([video_url])
+        except Exception:
+            print(Fore.YELLOW + f"\n⚠️ Section download failed for: {title}. Retrying full with post-cut.")
             ydl_opts.pop("download_sections", None)
             ydl_opts.pop("force_keyframes_at_cuts", None)
             ydl_opts["postprocessor_args"] = ["-ss", start, "-to", end]
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-        except yt_dlp.utils.DownloadError as exc:
-            sys.exit(f"❌ Download failed: {exc}")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl_each:
+                ydl_each.download([video_url])
 
-    print(Style.BRIGHT + f"\n✅ Finished! File saved in: {out_dir}\n")
+    print(Style.BRIGHT + f"\n✅ Finished! Files saved in: {out_dir}\n")
 
 if __name__ == "__main__":
     main()
