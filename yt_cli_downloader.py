@@ -109,20 +109,42 @@ def main() -> None:
     selected_indices = []
 
     if is_playlist:
-        with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as ydl_info:
-            playlist_info = ydl_info.extract_info(url, download=False)
+        try:
+            with yt_dlp.YoutubeDL({
+                "quiet": True, 
+                "extract_flat": True,
+                "ignore_errors": True,
+                "ignoreerrors": True
+            }) as ydl_info:
+                playlist_info = ydl_info.extract_info(url, download=False)
+        except Exception as e:
+            print(Fore.RED + f"❌ Failed to access playlist: {str(e)}")
+            print(Fore.CYAN + "💡 Try using a single video URL instead")
+            sys.exit(1)
+            
         entries = playlist_info.get("entries", [])
-        print(Fore.CYAN + f"\n📃 Detected playlist: {playlist_info.get('title', 'Untitled')} ({len(entries)} videos)\n")
+        # Count only accessible entries
+        accessible_entries = [e for e in entries if e is not None and e.get("title")]
+        
+        print(Fore.CYAN + f"\n📃 Detected playlist: {playlist_info.get('title', 'Untitled')} ({len(accessible_entries)} accessible videos)\n")
+        
+        if len(accessible_entries) == 0:
+            print(Fore.YELLOW + "⚠️ No accessible videos found in this playlist")
+            sys.exit(0)
+            
         choice = ask("Download semua atau pilih sebagian?", ["Semua video", "Pilih sebagian"])
         if choice.startswith("Pilih"):
             download_all = False
-            print("\nDaftar video dalam playlist:")
-            for i, entry in enumerate(entries, 1):
+            print("\nDaftar video yang dapat diakses dalam playlist:")
+            for i, entry in enumerate(accessible_entries, 1):
                 print(f" {i}. {entry.get('title', 'Unknown Title')}")
-            raw = input("\nMasukkan nomor video yang ingin didownload (pisahkan dengan koma, contoh: 1,3,5): ")
+            raw = input(f"\nMasukkan nomor video yang ingin didownload (1-{len(accessible_entries)}, pisahkan dengan koma): ")
             try:
                 selected_indices = [int(x.strip()) - 1 for x in raw.split(",") if x.strip().isdigit()]
-                selected_indices = [i for i in selected_indices if 0 <= i < len(entries)]
+                selected_indices = [i for i in selected_indices if 0 <= i < len(accessible_entries)]
+                if not selected_indices:
+                    print(Fore.YELLOW + "⚠️ No valid selection made")
+                    sys.exit(0)
             except Exception:
                 sys.exit("❌ Input tidak valid. Program dihentikan.")
 
@@ -170,14 +192,46 @@ def main() -> None:
 
     # (⬇️ Ambil metadata semua video)
     if not is_playlist:
-        with yt_dlp.YoutubeDL({"quiet": True}) as ydl_info:
-            info = ydl_info.extract_info(url, download=False)
-        entries = [info]
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl_info:
+                info = ydl_info.extract_info(url, download=False)
+            entries = [info]
+        except Exception as e:
+            print(Fore.RED + f"❌ Failed to extract video info: {str(e)}")
+            sys.exit(1)
     else:
-        with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": False}) as ydl_info:
-            full_info = ydl_info.extract_info(url, download=False)
-        all_entries = full_info.get("entries", [])
-        entries = [e for i, e in enumerate(all_entries) if download_all or i in selected_indices]
+        try:
+            # Use ignore_errors to skip private/unavailable videos
+            with yt_dlp.YoutubeDL({
+                "quiet": True, 
+                "extract_flat": False,
+                "ignore_errors": True,
+                "ignoreerrors": True
+            }) as ydl_info:
+                full_info = ydl_info.extract_info(url, download=False)
+            all_entries = full_info.get("entries", [])
+            # Filter out None entries (failed extractions) and apply user selection
+            valid_entries = [e for e in all_entries if e is not None]
+            if not download_all:
+                # Map selected indices to valid entries only
+                entries = []
+                valid_index = 0
+                for i, entry in enumerate(all_entries):
+                    if entry is not None:
+                        if valid_index in selected_indices:
+                            entries.append(entry)
+                        valid_index += 1
+            else:
+                entries = valid_entries
+                
+            if not entries:
+                print(Fore.YELLOW + "⚠️ No accessible videos found in playlist")
+                sys.exit(0)
+                
+            print(Fore.CYAN + f"📋 Found {len(entries)} accessible video(s) to download")
+        except Exception as e:
+            print(Fore.RED + f"❌ Failed to extract playlist info: {str(e)}")
+            sys.exit(1)
 
     try_fragment_cut = bool(start and end)
     default_ext = "mp4" if not is_audio else audio_fmt
@@ -185,6 +239,8 @@ def main() -> None:
     ydl_opts_base = {
         "ffmpeg_location": auto_ffmpeg,
         "quiet": True,
+        "ignore_errors": True,  # Skip individual video errors
+        "ignoreerrors": True,   # Continue on errors
         # Anti-detection measures
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "extractor_retries": 3,
@@ -199,8 +255,17 @@ def main() -> None:
     for entry in entries:
         if not entry:
             continue
+        
+        # Skip if entry doesn't have required info (private/unavailable)
         video_url = entry.get("webpage_url")
+        if not video_url:
+            print(Fore.YELLOW + f"⚠️ Skipping inaccessible video")
+            continue
+            
         title = sanitize_filename(entry.get("title", "video"), restricted=True)
+        if not title or title == "video":
+            print(Fore.YELLOW + f"⚠️ Skipping video with no title: {video_url}")
+            continue
         base_name = f"{title}_{quality_tag_base}"
         outtmpl = str(out_dir / f"{base_name}.%(ext)s")
 
