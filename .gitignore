@@ -1,2 +1,5 @@
 /audio
 /videos
+/bin
+__pycache__/
+.pytest_cache/
